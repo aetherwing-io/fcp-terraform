@@ -1074,6 +1074,117 @@ describe("dispatchOp", () => {
     });
   });
 
+  // ── STRING PREFIX s: ─────────────────────────────────────
+
+  describe("s: string prefix", () => {
+    it("forces string type with s: prefix on numeric value", () => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_db_instance", "db"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      const result = dispatchOp(
+        { verb: "set", positionals: ["db"],
+          params: { engine_version: "s:15" },
+          selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      const block = [...config.blocks.values()][0];
+      const attr = block.attributes.get("engine_version");
+      expect(attr?.valueType).toBe("string");
+      expect(attr?.value).toBe("15");
+    });
+
+    it("forces string type with s: prefix during add", () => {
+      const result = dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_db_instance", "db"],
+          params: { engine_version: "s:15", engine: "s:postgres" },
+          selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      const block = [...config.blocks.values()][0];
+      expect(block.attributes.get("engine_version")?.valueType).toBe("string");
+      expect(block.attributes.get("engine_version")?.value).toBe("15");
+      expect(block.attributes.get("engine")?.valueType).toBe("string");
+      expect(block.attributes.get("engine")?.value).toBe("postgres");
+    });
+
+    it("forces string type with s: prefix on bool-like value", () => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_instance", "web"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      const result = dispatchOp(
+        { verb: "set", positionals: ["web"],
+          params: { flag: "s:true" },
+          selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      const block = [...config.blocks.values()][0];
+      expect(block.attributes.get("flag")?.valueType).toBe("string");
+      expect(block.attributes.get("flag")?.value).toBe("true");
+    });
+  });
+
+  // ── EXPRESSION POSITIONAL SYNTAX ─────────────────────────
+
+  describe("set with positional expression", () => {
+    it("stores raw expression via positional syntax", () => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_iam_role", "role"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      const result = dispatchOp(
+        { verb: "set", positionals: ["role", "assume_role_policy", 'jsonencode({Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "ec2.amazonaws.com"}, Action: "sts:AssumeRole"}]})'],
+          params: {},
+          selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("expression");
+      const block = [...config.blocks.values()][0];
+      const attr = block.attributes.get("assume_role_policy");
+      expect(attr?.valueType).toBe("expression");
+      expect(attr?.value).toContain("jsonencode");
+    });
+
+    it("renders expression unquoted in HCL", () => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_iam_role", "role"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      dispatchOp(
+        { verb: "set", positionals: ["role", "assume_role_policy", 'jsonencode({Version: "2012-10-17"})'],
+          params: {},
+          selectors: [], raw: "" },
+        config, log,
+      );
+      const block = [...config.blocks.values()][0];
+      const attr = block.attributes.get("assume_role_policy");
+      expect(attr?.valueType).toBe("expression");
+      // When serialized, expression type renders unquoted (no wrapping quotes)
+      expect(attr?.value).toBe('jsonencode({Version: "2012-10-17"})');
+    });
+
+    it("falls back to key:value when params present", () => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_instance", "web"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      const result = dispatchOp(
+        { verb: "set", positionals: ["web"],
+          params: { instance_type: "t3.large" },
+          selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      const block = [...config.blocks.values()][0];
+      expect(block.attributes.get("instance_type")?.valueType).toBe("string");
+    });
+  });
+
   // ── UNKNOWN VERB ────────────────────────────────────────
 
   describe("unknown verb", () => {

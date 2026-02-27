@@ -110,8 +110,20 @@ function handleSet(op: ParsedOp, config: TerraformConfig, log: EventLog<Terrafor
   const block = findByLabel(config, label);
   if (!block) return { success: false, message: `block "${label}" not found` };
 
+  // Support positional expression syntax: set LABEL KEY "expression"
+  // When KEY is positionals[1] and expression is positionals[2], store as raw expression
+  if (Object.keys(op.params).length === 0 && op.positionals.length >= 3) {
+    const key = op.positionals[1];
+    const expr = op.positionals.slice(2).join(" ");
+    const before = block.attributes.get(key) ?? null;
+    const after: Attribute = { key, value: expr, valueType: "expression" };
+    block.attributes.set(key, after);
+    log.append({ type: "attribute_set", blockId: block.id, key, before: before ? structuredClone(before) : null, after: structuredClone(after) });
+    return { success: true, message: `${label}: set ${key} (expression)`, prefix: "*" };
+  }
+
   const keys = Object.keys(op.params);
-  if (keys.length === 0) return { success: false, message: "set requires at least one key:value" };
+  if (keys.length === 0) return { success: false, message: "set requires at least one key:value or KEY \"expression\"" };
 
   for (const [k, v] of Object.entries(op.params)) {
     const before = block.attributes.get(k) ?? null;

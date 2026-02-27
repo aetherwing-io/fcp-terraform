@@ -170,6 +170,10 @@ export function removeConnection(config: TerraformConfig, id: string): Connectio
  * When forceString is true, skip number/bool detection (user explicitly quoted the value).
  */
 export function makeAttribute(key: string, value: string, forceString?: boolean): Attribute {
+  // String type prefix: s:VALUE forces string type (e.g., engine_version:s:15)
+  if (!forceString && value.startsWith("s:")) {
+    return { key, value: value.slice(2), valueType: "string" };
+  }
   if (!forceString) {
     if (value === "true" || value === "false") {
       return { key, value, valueType: "bool" };

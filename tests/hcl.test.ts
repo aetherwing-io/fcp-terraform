@@ -181,6 +181,37 @@ describe("serializeToHcl", () => {
     await validateHcl(hcl);
   });
 
+  it("serializes expression valueType unquoted", async () => {
+    const block = createBlock("resource", "aws_iam_role", "role", {});
+    block.attributes.set("assume_role_policy", {
+      key: "assume_role_policy",
+      value: 'jsonencode({Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "ec2.amazonaws.com"}, Action: "sts:AssumeRole"}]})',
+      valueType: "expression",
+    });
+    addBlock(config, block);
+
+    const hcl = serializeToHcl(config);
+    // Expression type renders without wrapping quotes — it's a raw HCL function call
+    expect(hcl).toContain("assume_role_policy = jsonencode(");
+    expect(hcl).not.toContain('"jsonencode(');
+    await validateHcl(hcl);
+  });
+
+  it("serializes s: prefix forced strings in HCL with quotes", async () => {
+    const block = createBlock("resource", "aws_db_instance", "db", {});
+    // Simulating what makeAttribute produces with s: prefix
+    block.attributes.set("engine_version", {
+      key: "engine_version",
+      value: "15",
+      valueType: "string",
+    });
+    addBlock(config, block);
+
+    const hcl = serializeToHcl(config);
+    expect(hcl).toContain('engine_version = "15"');
+    await validateHcl(hcl);
+  });
+
   it("orders blocks: provider → variable → resource → output", async () => {
     addBlock(config, createBlock("output", "output", "ip", {}));
     addBlock(config, createBlock("resource", "aws_instance", "web", {}));

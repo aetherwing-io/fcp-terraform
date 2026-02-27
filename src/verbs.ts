@@ -14,12 +14,13 @@ export const VERB_SPECS: VerbSpec[] = [
   { verb: "disconnect", syntax: 'disconnect SRC -> TGT', category: "Connections", description: "Remove a dependency" },
 
   // Editing
-  { verb: "set", syntax: 'set LABEL key:value [key:value...]', category: "Editing", description: "Set attributes on an existing block" },
+  { verb: "set", syntax: 'set LABEL key:value [key:value...]', category: "Editing", description: "Set attributes on an existing block. Use key:\"value\" to force string type on numbers (e.g., engine_version:\"15\"). Use key:s:VALUE as shorthand (e.g., engine_version:s:15). Use positional form for raw expressions: set LABEL KEY \"expression\"" },
   { verb: "unset", syntax: 'unset LABEL KEY [KEY...]', category: "Editing", description: "Remove attributes from a block" },
   { verb: "remove", syntax: 'remove LABEL | remove @SELECTOR', category: "Editing", description: "Remove a block by label or selector" },
   { verb: "label", syntax: 'label OLD_LABEL "new_label"', category: "Editing", description: "Rename a block" },
   { verb: "style", syntax: 'style LABEL tags:"Key=Val,Key2=Val2"', category: "Editing", description: "Set tags on a resource" },
   { verb: "nest", syntax: 'nest LABEL BLOCK_TYPE [key:value...]', category: "Editing", description: "Add a nested block (e.g., ingress, root_block_device)" },
+  { verb: "unnest", syntax: 'unnest LABEL BLOCK_TYPE [INDEX]', category: "Editing", description: "Remove a nested block (last by default, or by index)" },
 ];
 
 export const REFERENCE_CARD_SECTIONS: Record<string, string> = {
@@ -42,6 +43,8 @@ export const REFERENCE_CARD_SECTIONS: Record<string, string> = {
     "  - Provider auto-detected from resource type prefix (aws_, google_, azurerm_)",
     "  - Use `plan` query to preview generated HCL without saving",
     "  - Use `graph` query to visualize dependency graph",
+    "  - Force string type: key:\"value\" or key:s:value (e.g., engine_version:s:15)",
+    "  - Raw HCL expressions: set LABEL KEY \"expr\" (e.g., set role policy \"jsonencode({...})\")",
     "  - Call terraform_help for full reference",
   ].join("\n"),
 };
