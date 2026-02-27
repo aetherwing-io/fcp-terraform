@@ -58,17 +58,55 @@ describe("dispatchOp", () => {
       expect(r2.success).toBe(false);
     });
 
-    it("returns error for duplicate label", () => {
+    it("allows same label on different types", () => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_vpc", "main"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      const result = dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_internet_gateway", "main"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      expect(config.blocks.size).toBe(2);
+    });
+
+    it("returns error for duplicate type+label", () => {
       dispatchOp(
         { verb: "add", positionals: ["resource", "aws_instance", "web"], params: {}, selectors: [], raw: "" },
         config, log,
       );
       const result = dispatchOp(
-        { verb: "add", positionals: ["resource", "aws_s3_bucket", "web"], params: {}, selectors: [], raw: "" },
+        { verb: "add", positionals: ["resource", "aws_instance", "web"], params: {}, selectors: [], raw: "" },
         config, log,
       );
       expect(result.success).toBe(false);
       expect(result.message).toContain("already exists");
+    });
+
+    it("resolves ambiguous labels via qualified syntax", () => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_vpc", "main"], params: { cidr_block: "10.0.0.0/16" }, selectors: [], raw: "" },
+        config, log,
+      );
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_internet_gateway", "main"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      // Unqualified "main" is now ambiguous
+      const r1 = dispatchOp(
+        { verb: "set", positionals: ["main"], params: { foo: "bar" }, selectors: [], raw: "" },
+        config, log,
+      );
+      expect(r1.success).toBe(false);
+      expect(r1.message).toContain("not found");
+
+      // Qualified "aws_vpc.main" resolves
+      const r2 = dispatchOp(
+        { verb: "set", positionals: ["aws_vpc.main"], params: { cidr_block: "10.1.0.0/16" }, selectors: [], raw: "" },
+        config, log,
+      );
+      expect(r2.success).toBe(true);
     });
   });
 
@@ -158,6 +196,16 @@ describe("dispatchOp", () => {
         config, log,
       );
       expect(log.recent()[0].type).toBe("block_added");
+    });
+
+    it("classifies non-reference output values as string", () => {
+      const result = dispatchOp(
+        { verb: "add", positionals: ["output", "desc"], params: { value: "My VPC description" }, selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      const block = [...config.blocks.values()][0];
+      expect(block.attributes.get("value")?.valueType).toBe("string");
     });
 
     it("returns error when missing NAME", () => {
@@ -591,7 +639,7 @@ describe("dispatchOp", () => {
       expect(result.success).toBe(false);
     });
 
-    it("returns error when new label already exists", () => {
+    it("allows rename to label used by different type", () => {
       dispatchOp(
         { verb: "add", positionals: ["resource", "aws_s3_bucket", "assets"], params: {}, selectors: [], raw: "" },
         config, log,
@@ -600,8 +648,36 @@ describe("dispatchOp", () => {
         { verb: "label", positionals: ["web", "assets"], params: {}, selectors: [], raw: "" },
         config, log,
       );
+      // Different types: aws_instance vs aws_s3_bucket — allowed
+      expect(result.success).toBe(true);
+    });
+
+    it("returns error when renaming to existing same-type label", () => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_instance", "web2"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      const result = dispatchOp(
+        { verb: "label", positionals: ["web", "web2"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
       expect(result.success).toBe(false);
       expect(result.message).toContain("already exists");
+    });
+
+    it("allows subsequent operations on renamed block", () => {
+      dispatchOp(
+        { verb: "label", positionals: ["web", "app_server"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      // The renamed label should be findable
+      const result = dispatchOp(
+        { verb: "style", positionals: ["app_server"], params: { tags: "Name=AppServer" }, selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      const block = [...config.blocks.values()][0];
+      expect(block.tags.get("Name")).toBe("AppServer");
     });
 
     it("returns error with missing args", () => {
@@ -690,6 +766,61 @@ describe("dispatchOp", () => {
     });
   });
 
+  describe("style @selector", () => {
+    beforeEach(() => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_instance", "web1"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_instance", "web2"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_s3_bucket", "assets"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+    });
+
+    it("applies tags to all blocks matching @all", () => {
+      const result = dispatchOp(
+        { verb: "style", positionals: [], params: { tags: "ManagedBy=terraform" }, selectors: ["@all"], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      expect(result.prefix).toBe("@");
+      for (const block of config.blocks.values()) {
+        expect(block.tags.get("ManagedBy")).toBe("terraform");
+      }
+    });
+
+    it("applies tags to blocks matching @type selector", () => {
+      const result = dispatchOp(
+        { verb: "style", positionals: [], params: { tags: "Type=Instance" }, selectors: ["@type:aws_instance"], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("2 block(s)");
+      // Only aws_instance blocks should have the tag
+      for (const block of config.blocks.values()) {
+        if (block.fullType === "aws_instance") {
+          expect(block.tags.get("Type")).toBe("Instance");
+        } else {
+          expect(block.tags.has("Type")).toBe(false);
+        }
+      }
+    });
+
+    it("returns error when no blocks match selector", () => {
+      const result = dispatchOp(
+        { verb: "style", positionals: [], params: { tags: "X=Y" }, selectors: ["@type:nonexistent"], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("no blocks match");
+    });
+  });
+
   // ── NEST ────────────────────────────────────────────────
 
   describe("nest", () => {
@@ -734,6 +865,99 @@ describe("dispatchOp", () => {
     it("returns error for non-existent block", () => {
       const result = dispatchOp(
         { verb: "nest", positionals: ["nonexistent", "ingress"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // ── UNNEST ──────────────────────────────────────────────
+
+  describe("unnest", () => {
+    beforeEach(() => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_security_group", "sg"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      dispatchOp(
+        { verb: "nest", positionals: ["sg", "ingress"], params: { from_port: "80", to_port: "80" }, selectors: [], raw: "" },
+        config, log,
+      );
+      dispatchOp(
+        { verb: "nest", positionals: ["sg", "ingress"], params: { from_port: "443", to_port: "443" }, selectors: [], raw: "" },
+        config, log,
+      );
+      dispatchOp(
+        { verb: "nest", positionals: ["sg", "egress"], params: { from_port: "0", to_port: "0" }, selectors: [], raw: "" },
+        config, log,
+      );
+    });
+
+    it("removes last nested block of a type by default", () => {
+      const result = dispatchOp(
+        { verb: "unnest", positionals: ["sg", "ingress"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      expect(result.prefix).toBe("-");
+      const block = [...config.blocks.values()][0];
+      const ingress = block.nestedBlocks.filter((nb) => nb.type === "ingress");
+      expect(ingress).toHaveLength(1);
+      expect(ingress[0].attributes.get("from_port")?.value).toBe("80");
+    });
+
+    it("removes nested block at specific index", () => {
+      const result = dispatchOp(
+        { verb: "unnest", positionals: ["sg", "ingress", "0"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      const block = [...config.blocks.values()][0];
+      const ingress = block.nestedBlocks.filter((nb) => nb.type === "ingress");
+      expect(ingress).toHaveLength(1);
+      expect(ingress[0].attributes.get("from_port")?.value).toBe("443");
+    });
+
+    it("emits nested_block_removed event", () => {
+      dispatchOp(
+        { verb: "unnest", positionals: ["sg", "ingress"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      const events = log.recent();
+      const removeEvent = events.find((e) => e.type === "nested_block_removed");
+      expect(removeEvent).toBeDefined();
+    });
+
+    it("preserves other nested block types", () => {
+      dispatchOp(
+        { verb: "unnest", positionals: ["sg", "ingress"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      const block = [...config.blocks.values()][0];
+      const egress = block.nestedBlocks.filter((nb) => nb.type === "egress");
+      expect(egress).toHaveLength(1);
+    });
+
+    it("returns error for non-existent nested block type", () => {
+      const result = dispatchOp(
+        { verb: "unnest", positionals: ["sg", "nonexistent"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(false);
+    });
+
+    it("returns error for out-of-range index", () => {
+      const result = dispatchOp(
+        { verb: "unnest", positionals: ["sg", "ingress", "5"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("out of range");
+    });
+
+    it("returns error with missing args", () => {
+      const result = dispatchOp(
+        { verb: "unnest", positionals: ["sg"], params: {}, selectors: [], raw: "" },
         config, log,
       );
       expect(result.success).toBe(false);
@@ -799,6 +1023,54 @@ describe("dispatchOp", () => {
       );
       expect(result.success).toBe(false);
       expect(result.message).toContain("KEY");
+    });
+  });
+
+  // ── STRING COERCION ────────────────────────────────────
+
+  describe("string coercion with quotedParams", () => {
+    it("preserves quoted number values as strings", () => {
+      const result = dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_rds_instance", "db"],
+          params: { engine_version: "15" },
+          selectors: [], raw: "",
+          quotedParams: new Set(["engine_version"]) },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      const block = [...config.blocks.values()][0];
+      const attr = block.attributes.get("engine_version");
+      expect(attr?.valueType).toBe("string");
+      expect(attr?.value).toBe("15");
+    });
+
+    it("coerces unquoted number values as numbers", () => {
+      const result = dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_instance", "web"],
+          params: { count: "3" },
+          selectors: [], raw: "" },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      const block = [...config.blocks.values()][0];
+      expect(block.attributes.get("count")?.valueType).toBe("number");
+    });
+
+    it("preserves quoted bool values as strings via set", () => {
+      dispatchOp(
+        { verb: "add", positionals: ["resource", "aws_instance", "web"], params: {}, selectors: [], raw: "" },
+        config, log,
+      );
+      const result = dispatchOp(
+        { verb: "set", positionals: ["web"],
+          params: { enable_flag: "true" },
+          selectors: [], raw: "",
+          quotedParams: new Set(["enable_flag"]) },
+        config, log,
+      );
+      expect(result.success).toBe(true);
+      const block = [...config.blocks.values()][0];
+      expect(block.attributes.get("enable_flag")?.valueType).toBe("string");
     });
   });
 

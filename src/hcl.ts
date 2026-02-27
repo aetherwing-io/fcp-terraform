@@ -170,7 +170,7 @@ function formatAttribute(attr: Attribute): string {
     case "list":
       return `${padded} = ${attr.value}`;
     case "map":
-      return `${padded} = ${attr.value}`;
+      return `${padded} = jsonencode(${attr.value})`;
     default:
       return `${padded} = "${attr.value}"`;
   }

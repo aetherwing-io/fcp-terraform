@@ -28,7 +28,7 @@ describe("Integration: TerraformAdapter end-to-end", () => {
   // ── Full workflow ─────────────────────────────────────
 
   describe("full infrastructure workflow", () => {
-    it("builds, queries, and validates a complete config", () => {
+    it("builds, queries, and validates a complete config", async () => {
       // Step 1: add provider
       let result = adapter.dispatchOp(parse("add provider aws region:us-east-1"), model, log);
       expect(result.success).toBe(true);
@@ -49,7 +49,7 @@ describe("Integration: TerraformAdapter end-to-end", () => {
       expect(result.success).toBe(true);
 
       // Step 5: verify plan generates valid HCL
-      const plan = adapter.dispatchQuery("plan", model);
+      const plan = await adapter.dispatchQuery("plan", model);
       expect(plan).toContain('provider "aws"');
       expect(plan).toContain('region = "us-east-1"');
       expect(plan).toContain('resource "aws_instance" "web"');
@@ -345,7 +345,7 @@ describe("Integration: TerraformAdapter end-to-end", () => {
   // ── Complex multi-step workflow ───────────────────────
 
   describe("multi-step workflow with edits", () => {
-    it("add -> set -> style -> nest -> connect -> plan", () => {
+    it("add -> set -> style -> nest -> connect -> plan", async () => {
       // Build
       adapter.dispatchOp(parse("add provider aws region:us-east-1"), model, log);
       adapter.dispatchOp(parse("add resource aws_instance web ami:ami-123 instance_type:t2.micro"), model, log);
@@ -360,7 +360,7 @@ describe("Integration: TerraformAdapter end-to-end", () => {
       adapter.dispatchOp(parse("connect web -> sg"), model, log);
 
       // Query plan
-      const plan = adapter.dispatchQuery("plan", model);
+      const plan = await adapter.dispatchQuery("plan", model);
       expect(plan).toContain('provider "aws"');
       expect(plan).toContain('instance_type = "t3.small"');
       expect(plan).toContain("ingress {");

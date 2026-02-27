@@ -189,11 +189,11 @@ describe("dispatchQuery", () => {
   // ── PLAN ────────────────────────────────────────────────
 
   describe("plan", () => {
-    it("generates valid HCL", () => {
+    it("generates valid HCL", async () => {
       addProvider("aws", { region: "us-east-1" });
       addResource("aws_instance", "web", { ami: "ami-123", instance_type: "t2.micro" });
 
-      const result = dispatchQuery("plan", config, log);
+      const result = await dispatchQuery("plan", config, log);
       expect(result).toContain('provider "aws"');
       expect(result).toContain('region = "us-east-1"');
       expect(result).toContain('resource "aws_instance" "web"');
@@ -201,17 +201,17 @@ describe("dispatchQuery", () => {
       expect(result).toContain("instance_type");
     });
 
-    it("includes depends_on from connections", () => {
+    it("includes depends_on from connections", async () => {
       addResource("aws_instance", "web", { ami: "ami-123" });
       addResource("aws_s3_bucket", "assets");
       connectBlocks("web", "assets");
 
-      const result = dispatchQuery("plan", config, log);
+      const result = await dispatchQuery("plan", config, log);
       expect(result).toContain("depends_on = [aws_s3_bucket.assets]");
     });
 
-    it("returns message for empty config", () => {
-      const result = dispatchQuery("plan", config, log);
+    it("returns message for empty config", async () => {
+      const result = await dispatchQuery("plan", config, log);
       expect(result).toContain("Empty configuration");
     });
   });

@@ -57,7 +57,7 @@ export class TerraformAdapter implements FcpDomainAdapter<TerraformConfig, Terra
     return dispatchOp(op, model, log);
   }
 
-  dispatchQuery(query: string, model: TerraformConfig): string {
+  dispatchQuery(query: string, model: TerraformConfig): string | Promise<string> {
     return dispatchQuery(query, model, currentEventLog);
   }
 
@@ -113,7 +113,7 @@ export class TerraformAdapter implements FcpDomainAdapter<TerraformConfig, Terra
         const block = model.blocks.get(event.blockId);
         if (!block) return;
         block.nestedBlocks = block.nestedBlocks.filter(
-          (nb) => nb.type !== event.nestedBlock.type,
+          (nb) => nb.id !== event.nestedBlock.id,
         );
         break;
       }
@@ -185,7 +185,7 @@ export class TerraformAdapter implements FcpDomainAdapter<TerraformConfig, Terra
         const block = model.blocks.get(event.blockId);
         if (!block) return;
         block.nestedBlocks = block.nestedBlocks.filter(
-          (nb) => nb.type !== event.nestedBlock.type,
+          (nb) => nb.id !== event.nestedBlock.id,
         );
         break;
       }
@@ -225,6 +225,7 @@ function blockToJson(block: TfBlock): Record<string, unknown> {
     attributes: Object.fromEntries(block.attributes),
     tags: Object.fromEntries(block.tags),
     nestedBlocks: block.nestedBlocks.map((nb) => ({
+      id: nb.id,
       type: nb.type,
       attributes: Object.fromEntries(nb.attributes),
     })),
@@ -280,5 +281,5 @@ function restoreNestedBlock(data: NestedBlock): NestedBlock {
   const attrs = data.attributes instanceof Map
     ? data.attributes
     : new Map(Object.entries(data.attributes as unknown as Record<string, Attribute>));
-  return { type: data.type, attributes: attrs };
+  return { id: data.id, type: data.type, attributes: attrs };
 }

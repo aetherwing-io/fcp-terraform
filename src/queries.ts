@@ -8,7 +8,7 @@ export function dispatchQuery(
   query: string,
   config: TerraformConfig,
   eventLog?: EventLog<TerraformEvent>,
-): string {
+): string | Promise<string> {
   const parts = query.trim().split(/\s+/);
   const cmd = parts[0]?.toLowerCase() ?? "";
   const args = parts.slice(1);
@@ -160,9 +160,17 @@ function queryDescribe(config: TerraformConfig, label: string | undefined): stri
   return lines.join("\n");
 }
 
-function queryPlan(config: TerraformConfig): string {
+async function queryPlan(config: TerraformConfig): Promise<string> {
   if (config.blocks.size === 0) return "Empty configuration. Add some resources first.";
-  return serializeToHcl(config);
+  const hcl = serializeToHcl(config);
+  try {
+    const { parse } = await import("@cdktf/hcl2json");
+    await parse("plan.tf", hcl);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return hcl + `\n\n⚠ HCL validation failed: ${msg}`;
+  }
+  return hcl;
 }
 
 function queryGraph(config: TerraformConfig): string {

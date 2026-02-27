@@ -31,15 +31,22 @@ describe("ConfigModel", () => {
       expect(config.blockOrder).toContain(block.id);
     });
 
-    it("enforces label uniqueness", () => {
+    it("allows same label on different types", () => {
       addBlock(config, createBlock("resource", "aws_s3_bucket", "assets", {}));
       const err = addBlock(config, createBlock("resource", "aws_instance", "assets", {}));
+      expect(err).toBeNull();
+      expect(config.blocks.size).toBe(2);
+    });
+
+    it("enforces uniqueness for same type+label", () => {
+      addBlock(config, createBlock("resource", "aws_s3_bucket", "assets", {}));
+      const err = addBlock(config, createBlock("resource", "aws_s3_bucket", "assets", {}));
       expect(err).toContain("already exists");
     });
 
-    it("is case-insensitive for labels", () => {
+    it("is case-insensitive for type+label uniqueness", () => {
       addBlock(config, createBlock("resource", "aws_s3_bucket", "Assets", {}));
-      const err = addBlock(config, createBlock("resource", "aws_instance", "assets", {}));
+      const err = addBlock(config, createBlock("resource", "aws_s3_bucket", "assets", {}));
       expect(err).toContain("already exists");
     });
   });
@@ -59,6 +66,21 @@ describe("ConfigModel", () => {
 
     it("returns undefined for missing", () => {
       expect(findByLabel(config, "nonexistent")).toBeUndefined();
+    });
+
+    it("returns undefined for ambiguous label", () => {
+      addBlock(config, createBlock("resource", "aws_vpc", "main", {}));
+      addBlock(config, createBlock("resource", "aws_internet_gateway", "main", {}));
+      expect(findByLabel(config, "main")).toBeUndefined();
+    });
+
+    it("resolves qualified label for ambiguous cases", () => {
+      const vpc = createBlock("resource", "aws_vpc", "main", { cidr_block: "10.0.0.0/16" });
+      const igw = createBlock("resource", "aws_internet_gateway", "main", {});
+      addBlock(config, vpc);
+      addBlock(config, igw);
+      expect(findByLabel(config, "aws_vpc.main")).toBe(vpc);
+      expect(findByLabel(config, "aws_internet_gateway.main")).toBe(igw);
     });
   });
 

@@ -23,6 +23,7 @@ export interface Attribute {
  * A nested block within a resource (e.g., ingress {}, root_block_device {}).
  */
 export interface NestedBlock {
+  id: string;
   type: string;
   attributes: Map<string, Attribute>;
 }

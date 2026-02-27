@@ -4,7 +4,7 @@ import type { TerraformConfig, TerraformEvent, TfBlock, Attribute } from "./type
 import {
   findByLabel, addBlock, removeBlock, addConnection, removeConnection,
   createBlock, generateId, makeAttribute, deriveProvider,
-  findByType, findByKind, findByProvider,
+  findByType, findByKind, findByProvider, rebuildLabelIndex,
 } from "./model.js";
 
 type Handler = (op: ParsedOp, config: TerraformConfig, log: EventLog<TerraformEvent>) => OpResult;
@@ -33,7 +33,7 @@ function handleAdd(op: ParsedOp, config: TerraformConfig, log: EventLog<Terrafor
       if (!fullType || !label) {
         return { success: false, message: "add resource requires TYPE and LABEL" };
       }
-      const block = createBlock("resource", fullType, label, op.params);
+      const block = createBlock("resource", fullType, label, op.params, op.quotedParams);
       const err = addBlock(config, block);
       if (err) return { success: false, message: err };
       log.append({ type: "block_added", block: structuredClone(block) });
@@ -43,7 +43,7 @@ function handleAdd(op: ParsedOp, config: TerraformConfig, log: EventLog<Terrafor
     case "provider": {
       const name = op.positionals[1];
       if (!name) return { success: false, message: "add provider requires PROVIDER name" };
-      const block = createBlock("provider", name, name, op.params);
+      const block = createBlock("provider", name, name, op.params, op.quotedParams);
       block.provider = name;
       const err = addBlock(config, block);
       if (err) return { success: false, message: err };
@@ -54,7 +54,7 @@ function handleAdd(op: ParsedOp, config: TerraformConfig, log: EventLog<Terrafor
     case "variable": {
       const label = op.positionals[1];
       if (!label) return { success: false, message: "add variable requires NAME" };
-      const block = createBlock("variable", "variable", label, op.params);
+      const block = createBlock("variable", "variable", label, op.params, op.quotedParams);
       block.provider = "";
       const err = addBlock(config, block);
       if (err) return { success: false, message: err };
@@ -65,17 +65,8 @@ function handleAdd(op: ParsedOp, config: TerraformConfig, log: EventLog<Terrafor
     case "output": {
       const label = op.positionals[1];
       if (!label) return { success: false, message: "add output requires NAME" };
-      const attrs = { ...op.params };
-      // Mark value attribute as reference if it looks like one
-      const block = createBlock("output", "output", label, {});
+      const block = createBlock("output", "output", label, op.params, op.quotedParams);
       block.provider = "";
-      for (const [k, v] of Object.entries(attrs)) {
-        const attr = makeAttribute(k, v);
-        if (k === "value" && !v.startsWith('"')) {
-          attr.valueType = "reference";
-        }
-        block.attributes.set(k, attr);
-      }
       const err = addBlock(config, block);
       if (err) return { success: false, message: err };
       log.append({ type: "block_added", block: structuredClone(block) });
@@ -88,7 +79,7 @@ function handleAdd(op: ParsedOp, config: TerraformConfig, log: EventLog<Terrafor
       if (!fullType || !label) {
         return { success: false, message: "add data requires TYPE and LABEL" };
       }
-      const block = createBlock("data", fullType, label, op.params);
+      const block = createBlock("data", fullType, label, op.params, op.quotedParams);
       block.kind = "data";
       const err = addBlock(config, block);
       if (err) return { success: false, message: err };
@@ -99,7 +90,7 @@ function handleAdd(op: ParsedOp, config: TerraformConfig, log: EventLog<Terrafor
     case "module": {
       const label = op.positionals[1];
       if (!label) return { success: false, message: "add module requires LABEL" };
-      const block = createBlock("module", "module", label, op.params);
+      const block = createBlock("module", "module", label, op.params, op.quotedParams);
       block.provider = "";
       block.kind = "module";
       const err = addBlock(config, block);
@@ -124,7 +115,7 @@ function handleSet(op: ParsedOp, config: TerraformConfig, log: EventLog<Terrafor
 
   for (const [k, v] of Object.entries(op.params)) {
     const before = block.attributes.get(k) ?? null;
-    const after = makeAttribute(k, v);
+    const after = makeAttribute(k, v, op.quotedParams?.has(k));
     block.attributes.set(k, after);
     log.append({ type: "attribute_set", blockId: block.id, key: k, before: before ? structuredClone(before) : null, after: structuredClone(after) });
   }
@@ -209,23 +200,21 @@ function handleLabel(op: ParsedOp, config: TerraformConfig, log: EventLog<Terraf
 
   const block = findByLabel(config, oldLabel);
   if (!block) return { success: false, message: `block "${oldLabel}" not found` };
-  if (findByLabel(config, newLabel)) return { success: false, message: `label "${newLabel}" already exists` };
+  // Check for type+label conflict
+  for (const existing of config.blocks.values()) {
+    if (existing.id !== block.id && existing.fullType === block.fullType && existing.label.toLowerCase() === newLabel.toLowerCase()) {
+      return { success: false, message: `${block.fullType} "${newLabel}" already exists` };
+    }
+  }
 
   const before = block.label;
   block.label = newLabel;
+  rebuildLabelIndex(config);
   log.append({ type: "block_renamed", blockId: block.id, before, after: newLabel });
   return { success: true, message: `"${before}" → "${newLabel}"`, prefix: "*" };
 }
 
-function handleStyle(op: ParsedOp, config: TerraformConfig, log: EventLog<TerraformEvent>): OpResult {
-  const label = op.positionals[0];
-  if (!label) return { success: false, message: "style requires LABEL" };
-  const block = findByLabel(config, label);
-  if (!block) return { success: false, message: `block "${label}" not found` };
-
-  const tagsStr = op.params["tags"];
-  if (!tagsStr) return { success: false, message: "style requires tags:\"Key=Val,Key2=Val2\"" };
-
+function applyTags(block: TfBlock, tagsStr: string, log: EventLog<TerraformEvent>): void {
   const pairs = tagsStr.split(",").map((p) => p.trim());
   for (const pair of pairs) {
     const eqIdx = pair.indexOf("=");
@@ -236,6 +225,29 @@ function handleStyle(op: ParsedOp, config: TerraformConfig, log: EventLog<Terraf
     block.tags.set(key, val);
     log.append({ type: "tag_set", blockId: block.id, key, before, after: val });
   }
+}
+
+function handleStyle(op: ParsedOp, config: TerraformConfig, log: EventLog<TerraformEvent>): OpResult {
+  const tagsStr = op.params["tags"];
+  if (!tagsStr) return { success: false, message: "style requires tags:\"Key=Val,Key2=Val2\"" };
+
+  // Selector-based styling
+  if (op.selectors.length > 0) {
+    const resolved = resolveSelectors(op.selectors, config);
+    if (resolved.length === 0) return { success: false, message: "no blocks match selector" };
+    for (const block of resolved) {
+      applyTags(block, tagsStr, log);
+    }
+    return { success: true, message: `styled ${resolved.length} block(s)`, prefix: "@" };
+  }
+
+  // Label-based styling
+  const label = op.positionals[0];
+  if (!label) return { success: false, message: "style requires LABEL or @selector" };
+  const block = findByLabel(config, label);
+  if (!block) return { success: false, message: `block "${label}" not found` };
+
+  applyTags(block, tagsStr, log);
   return { success: true, message: `${label}: tags set`, prefix: "*" };
 }
 
@@ -249,9 +261,9 @@ function handleNest(op: ParsedOp, config: TerraformConfig, log: EventLog<Terrafo
 
   const attrs = new Map<string, Attribute>();
   for (const [k, v] of Object.entries(op.params)) {
-    attrs.set(k, makeAttribute(k, v));
+    attrs.set(k, makeAttribute(k, v, op.quotedParams?.has(k)));
   }
-  const nested = { type: blockType, attributes: attrs };
+  const nested = { id: generateId(), type: blockType, attributes: attrs };
   block.nestedBlocks.push(nested);
   log.append({ type: "nested_block_added", blockId: block.id, nestedBlock: structuredClone(nested) });
   return { success: true, message: `${label}: ${blockType} block added`, prefix: "+" };
@@ -274,6 +286,35 @@ function handleUnset(op: ParsedOp, config: TerraformConfig, log: EventLog<Terraf
     }
   }
   return { success: true, message: `${label}: unset ${keys.join(", ")}`, prefix: "*" };
+}
+
+function handleUnnest(op: ParsedOp, config: TerraformConfig, log: EventLog<TerraformEvent>): OpResult {
+  const label = op.positionals[0];
+  const blockType = op.positionals[1];
+  if (!label || !blockType) return { success: false, message: "unnest requires LABEL BLOCK_TYPE [INDEX]" };
+
+  const block = findByLabel(config, label);
+  if (!block) return { success: false, message: `block "${label}" not found` };
+
+  const matching = block.nestedBlocks.filter((nb) => nb.type === blockType);
+  if (matching.length === 0) return { success: false, message: `no "${blockType}" nested block on "${label}"` };
+
+  const indexStr = op.positionals[2];
+  let target: typeof matching[0];
+  if (indexStr !== undefined) {
+    const idx = parseInt(indexStr, 10);
+    if (isNaN(idx) || idx < 0 || idx >= matching.length) {
+      return { success: false, message: `index ${indexStr} out of range (0-${matching.length - 1})` };
+    }
+    target = matching[idx];
+  } else {
+    // Remove last block of that type
+    target = matching[matching.length - 1];
+  }
+
+  block.nestedBlocks = block.nestedBlocks.filter((nb) => nb.id !== target.id);
+  log.append({ type: "nested_block_removed", blockId: block.id, nestedBlock: structuredClone(target) });
+  return { success: true, message: `${label}: ${blockType} block removed`, prefix: "-" };
 }
 
 // ── Selector resolution ─────────────────────────────────
@@ -318,5 +359,6 @@ const HANDLERS: Record<string, Handler> = {
   label: handleLabel,
   style: handleStyle,
   nest: handleNest,
+  unnest: handleUnnest,
   unset: handleUnset,
 };
