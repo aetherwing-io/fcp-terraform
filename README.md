@@ -82,7 +82,7 @@ output "instance_ip" {
 Requires Node >= 18.
 
 ```bash
-npm install fcp-terraform
+npm install @aetherwing/fcp-terraform
 ```
 
 ### MCP Client Configuration
@@ -92,7 +92,7 @@ npm install fcp-terraform
   "mcpServers": {
     "terraform": {
       "command": "node",
-      "args": ["node_modules/fcp-terraform/dist/index.js"]
+      "args": ["node_modules/@aetherwing/fcp-terraform/dist/index.js"]
     }
   }
 }
