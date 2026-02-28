@@ -328,8 +328,8 @@ func TestNovaPay(t *testing.T) {
 			`tag aws_cloudwatch_log_group.ecs Name:"${var.project_name}-ecs-logs" Environment:var.environment ManagedBy:terraform`,
 		)
 
-		// #8 Lifecycle block with ignore_changes
-		runOp(`nest main_api lifecycle ignore_changes:[!desired_count]`)
+		// #8 Lifecycle block with ignore_changes (bare identifiers render raw)
+		runOp(`nest main_api lifecycle ignore_changes:[desired_count]`)
 
 		// #9 S3 bucket versioning
 		runOps(

@@ -105,6 +105,17 @@ func TestSetAttribute_ForceString_Bool(t *testing.T) {
 	}
 }
 
+func TestSetAttribute_ForceString_WithInterpolation(t *testing.T) {
+	// Quoted values containing ${...} should preserve interpolation, not double-escape
+	got := setAndRender("name", "${var.project_name}-orders-${var.environment}.fifo", true)
+	if strings.Contains(got, "$$") {
+		t.Errorf("interpolation should not be double-escaped, got: %s", got)
+	}
+	if !strings.Contains(got, "${var.project_name}") {
+		t.Errorf("expected interpolation preserved, got: %s", got)
+	}
+}
+
 func TestSetAttribute_StringPrefix(t *testing.T) {
 	got := setAndRender("engine_version", "s:15", false)
 	if !strings.Contains(got, `"15"`) {
@@ -120,10 +131,21 @@ func TestSetAttribute_EmptyList(t *testing.T) {
 }
 
 func TestSetAttribute_ListOfStrings(t *testing.T) {
-	got := setAndRender("tags", "[web,api,prod]", false)
-	// Should produce quoted string elements
+	// Explicitly quoted strings in lists stay quoted
+	got := setAndRender("tags", `["web","api","prod"]`, false)
 	if !strings.Contains(got, `"web"`) || !strings.Contains(got, `"api"`) || !strings.Contains(got, `"prod"`) {
 		t.Errorf("expected quoted string list elements, got: %s", got)
+	}
+}
+
+func TestSetAttribute_ListOfIdentifiers(t *testing.T) {
+	// Bare simple identifiers in lists render as raw (e.g., ignore_changes = [desired_count])
+	got := setAndRender("ignore_changes", "[desired_count]", false)
+	if !strings.Contains(got, "desired_count") {
+		t.Errorf("expected bare identifier, got: %s", got)
+	}
+	if strings.Contains(got, `"desired_count"`) {
+		t.Errorf("bare identifier should not be quoted, got: %s", got)
 	}
 }
 
@@ -150,8 +172,9 @@ func TestSetAttribute_ListMixed(t *testing.T) {
 	if !strings.Contains(got, "var.a") {
 		t.Errorf("expected unquoted reference, got: %s", got)
 	}
-	if !strings.Contains(got, `"hello"`) {
-		t.Errorf("expected quoted string, got: %s", got)
+	// "hello" is a simple identifier — renders raw (not quoted)
+	if strings.Contains(got, `"hello"`) {
+		t.Errorf("simple identifier should not be quoted, got: %s", got)
 	}
 }
 

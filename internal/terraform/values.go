@@ -13,6 +13,10 @@ import (
 // referencePattern matches Terraform references: aws_*, google_*, azurerm_*, var.*, local.*, data.*, module.*
 var referencePattern = regexp.MustCompile(`^(aws_|google_|azurerm_|var\.|local\.|data\.|module\.)`)
 
+// simpleIdentPattern matches bare identifiers (e.g., desired_count) for use as
+// unquoted list elements in contexts like ignore_changes = [desired_count].
+var simpleIdentPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
 // numberPattern matches integers and decimals
 var numberPattern = regexp.MustCompile(`^\d+(\.\d+)?$`)
 
@@ -37,7 +41,12 @@ func SetAttribute(body *hclwrite.Body, key, value string, forceString bool) {
 	}
 
 	if forceString {
-		body.SetAttributeValue(key, cty.StringVal(value))
+		if strings.Contains(value, "${") {
+			// Quoted value contains interpolation — use raw tokens to preserve ${...}
+			body.SetAttributeRaw(key, rawTokens(`"`+value+`"`))
+		} else {
+			body.SetAttributeValue(key, cty.StringVal(value))
+		}
 		return
 	}
 
@@ -146,6 +155,10 @@ func tokensForElement(elem string) hclwrite.Tokens {
 	// Already quoted
 	if len(elem) >= 2 && elem[0] == '"' && elem[len(elem)-1] == '"' {
 		return hclwrite.TokensForValue(cty.StringVal(elem[1 : len(elem)-1]))
+	}
+	// Simple identifier (bare attribute reference, e.g., desired_count in ignore_changes)
+	if simpleIdentPattern.MatchString(elem) {
+		return rawTokens(elem)
 	}
 	// Default: string
 	return hclwrite.TokensForValue(cty.StringVal(elem))

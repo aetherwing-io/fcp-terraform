@@ -22,7 +22,7 @@ func TerraformVerbSpecs() []fcpcore.VerbSpec {
 		{Name: "label", Syntax: `label OLD_LABEL "new_label"`, Category: "editing"},
 		{Name: "style", Syntax: `style LABEL tags:"Key=Val,Key2=Val2"`, Category: "editing"},
 		{Name: "tag", Syntax: "tag LABEL key:value [key:value...] | tag @SELECTOR key:value...", Category: "editing"},
-		{Name: "nest", Syntax: "nest LABEL BLOCK_TYPE [key:value...]", Category: "editing"},
+		{Name: "nest", Syntax: "nest LABEL BLOCK_TYPE[/CHILD_TYPE] [key:value...]", Category: "editing"},
 		{Name: "unnest", Syntax: "unnest LABEL BLOCK_TYPE [INDEX]", Category: "editing"},
 	}
 }
