@@ -1,7 +1,5 @@
-node_modules/
-dist/
-.env
-.env.*
-*.tsbuildinfo
+/fcp-terraform
+/dist/
 .DS_Store
-.npmrc
+.idea/
+.vscode/

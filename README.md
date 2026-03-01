@@ -6,6 +6,8 @@ MCP server for Terraform HCL generation through intent-level commands.
 
 fcp-terraform lets LLMs build Terraform configurations by describing infrastructure intent -- resources, data sources, variables, outputs -- and renders them into valid HCL. Instead of writing raw HCL syntax, the LLM sends operations like `add resource aws_instance web ami:"ami-0c55b159" instance_type:t2.micro` and fcp-terraform manages the semantic model, dependency graph, and serialization. Built on the [FCP](https://github.com/aetherwing-io/fcp) framework.
 
+Written in Go using HashiCorp's `hclwrite` library for native HCL AST generation -- no string concatenation or template rendering.
+
 ## Quick Example
 
 ```
@@ -52,7 +54,7 @@ output "instance_ip" {
 | `terraform_session(action)` | Lifecycle -- new, open, save, checkpoint, undo, redo |
 | `terraform_help()` | Full reference card |
 
-### Supported Block Types
+### Verb Reference
 
 | Verb | Syntax |
 |------|--------|
@@ -64,8 +66,10 @@ output "instance_ip" {
 | `add module` | `add module LABEL source:PATH [key:value...]` |
 | `connect` | `connect SRC -> TGT [label:TEXT]` |
 | `set` | `set LABEL key:value [key:value...]` |
-| `nest` | `nest LABEL BLOCK_TYPE [key:value...]` |
+| `nest` | `nest LABEL BLOCK_TYPE[/CHILD_TYPE] [key:value...]` |
 | `remove` | `remove LABEL` or `remove @SELECTOR` |
+| `label` | `label OLD_LABEL "new_label"` |
+| `style` | `style LABEL tags:"Key=Val,Key2=Val2"` |
 
 ### Selectors
 
@@ -79,20 +83,23 @@ output "instance_ip" {
 
 ## Installation
 
-Requires Node >= 18.
+### Go install
 
 ```bash
-npm install @aetherwing/fcp-terraform
+go install github.com/aetherwing-io/fcp-terraform/cmd/fcp-terraform@latest
 ```
+
+### GitHub Releases
+
+Download a prebuilt binary from [Releases](https://github.com/aetherwing-io/fcp-terraform/releases) and put `fcp-terraform` on your PATH.
 
 ### MCP Client Configuration
 
 ```json
 {
   "mcpServers": {
-    "terraform": {
-      "command": "node",
-      "args": ["node_modules/@aetherwing/fcp-terraform/dist/index.js"]
+    "fcp-terraform": {
+      "command": "fcp-terraform"
     }
   }
 }
@@ -100,28 +107,30 @@ npm install @aetherwing/fcp-terraform
 
 ## Architecture
 
-3-layer architecture:
-
 ```
-MCP Server (Intent Layer)
-  src/server/ -- Parses op strings, resolves refs, dispatches
-        |
-Semantic Model (Domain)
-  src/model/ -- In-memory Terraform graph (resources, data, variables, outputs)
-  src/types/ -- Core TypeScript interfaces
-        |
-Serialization (HCL)
-  src/hcl.ts -- Semantic model -> HCL text output
+cmd/fcp-terraform/main.go     MCP server — 4 tools, stdio transport
+        │
+internal/terraform/            Domain layer
+  ├── model.go                 Semantic model (blocks, attributes, connections)
+  ├── adapter.go               FCP adapter (dispatch ops → handlers)
+  ├── handlers.go              Verb handlers (add, set, remove, nest, etc.)
+  ├── queries.go               Query dispatcher (plan, graph, describe, etc.)
+  ├── selectors.go             @type, @provider, @kind, @tag, @all
+  ├── values.go                Attribute type inference, hclwrite value generation
+  ├── verb_specs.go            Verb specifications and reference card sections
+  ├── block_ref.go             Terraform reference detection
+  └── index.go                 Label index for O(1) lookups
+        │
+internal/fcpcore/              Shared FCP framework (Go port)
+  ├── tokenizer.go             DSL tokenizer
+  ├── parsed_op.go             Operation parser
+  ├── verb_registry.go         Verb spec registry + reference card generator
+  ├── event_log.go             Event sourcing (undo/redo)
+  ├── session.go               Session lifecycle (new, open, save, checkpoint)
+  └── formatter.go             Response formatter
 ```
 
-Supporting modules:
-
-- `src/ops.ts` -- Operation string parser
-- `src/verbs.ts` -- Verb specs and reference card
-- `src/queries.ts` -- Query dispatcher (map, plan, graph, validate, etc.)
-- `src/adapter.ts` -- FCP core adapter
-
-Provider is auto-detected from resource type prefixes (`aws_`, `google_`, `azurerm_`).
+HCL generation uses HashiCorp's `hclwrite` package for native AST manipulation. Provider is auto-detected from resource type prefixes (`aws_`, `google_`, `azurerm_`).
 
 ## Worked Example: AWS Production Web Stack
 
@@ -197,56 +206,13 @@ terraform([
 terraform_query('plan')  # Export final HCL
 ```
 
-## Capability Matrix
-
-| Capability | Status | Notes |
-|------------|--------|-------|
-| Resources, data sources, modules | Supported | All Terraform block types |
-| Variables with types and defaults | Supported | string, number, bool, list, map, object |
-| Outputs | Supported | Simple value expressions |
-| Nested blocks (ingress, egress, route, filter) | Supported | Via `nest` verb |
-| Tags | Supported | Via `style` verb with `tags:"K=V,K2=V2"` |
-| Rename blocks | Partial | `label` renames but does not cascade references |
-| Selectors for bulk operations | Partial | `remove @selector` works; `style @selector` not yet supported |
-| `jsonencode()` / HCL functions | Not supported | Complex expressions containing colons conflict with the DSL tokenizer |
-| Nested block removal/editing | Not supported | Nested blocks are append-only |
-| `count` / `for_each` meta-arguments | Not supported | `set` cannot modify meta-arguments |
-
-## Known Limitations
-
-The following issues were identified through competitive validation against raw HCL writing. They are tracked for resolution.
-
-**HCL Serialization**
-
-- **List values in nested blocks render without quotes.** Attributes like `cidr_blocks`, `security_groups`, and `values` in filter/ingress/egress blocks output `[0.0.0.0/0]` instead of `["0.0.0.0/0"]`. This produces invalid HCL. Workaround: post-process the output or use `terraform_query('plan')` output as a starting point for manual fixes.
-
-- **String values may lose their type.** Setting `engine_version:"15"` renders as `engine_version = 15` (number). The serializer does not preserve explicit string quoting for numeric-looking values.
-
-- **Output values with interpolation render unquoted.** An output `value:"VPC: ${aws_vpc.main.id}"` renders without surrounding quotes.
-
-**Labels**
-
-- **Labels are globally unique.** You cannot use `main` for both `aws_vpc.main` and `aws_internet_gateway.main` even though Terraform allows this (labels are scoped per type). Use distinct labels like `igw`, `rds`, `dbsubnet`.
-
-- **`label` rename breaks the lookup index.** After renaming a block with `label old new`, subsequent `style new` or `set new` calls may return "block not found". The internal index is not rebuilt after rename.
-
-**Nested Blocks**
-
-- **Cannot remove or edit specific nested blocks.** Once added via `nest`, a nested block (ingress rule, route, filter) cannot be individually removed or modified. If a `nest` call produces an error but partially succeeds, the ghost block persists.
-
-**Expressions**
-
-- **JSON with colons conflicts with the DSL tokenizer.** IAM `assume_role_policy` or similar JSON-containing attributes are parsed as key:value pairs by the FCP tokenizer, producing bare JSON objects instead of quoted strings or `jsonencode()` calls.
-
 ## Development
 
 ```bash
-npm install
-npm run build     # tsc
-npm test          # vitest, 138 tests
+go test ./...                        # Run all tests
+go build ./cmd/fcp-terraform         # Build binary
 ```
 
 ## License
 
 MIT
-
