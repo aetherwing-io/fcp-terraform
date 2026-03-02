@@ -92,18 +92,24 @@ func main() {
 				return mcp.NewToolResultText(fmt.Sprintf("! Batch failed at op %d: %s. Error: %s. State rolled back (%d ops reverted).", i+1, opStr, parsed.Err.Error, i)), nil
 			}
 
-			// Verb validation
-			if _, ok := registry.Lookup(parsed.Op.Verb); !ok {
-				msg := fmt.Sprintf("unknown verb %q", parsed.Op.Verb)
-				verbNames := make([]string, 0)
-				for _, v := range registry.Verbs() {
-					verbNames = append(verbNames, v.Name)
+			// Verb validation: try bare verb, then compound verb (e.g. "add resource")
+			verbKey := parsed.Op.Verb
+			if _, ok := registry.Lookup(verbKey); !ok {
+				if len(parsed.Op.Positionals) > 0 {
+					verbKey = parsed.Op.Verb + " " + parsed.Op.Positionals[0]
 				}
-				if suggestion := fcpcore.Suggest(parsed.Op.Verb, verbNames); suggestion != "" {
-					msg += "\n  try: " + suggestion
+				if _, ok := registry.Lookup(verbKey); !ok {
+					msg := fmt.Sprintf("unknown verb %q", parsed.Op.Verb)
+					verbNames := make([]string, 0)
+					for _, v := range registry.Verbs() {
+						verbNames = append(verbNames, v.Name)
+					}
+					if suggestion := fcpcore.Suggest(parsed.Op.Verb, verbNames); suggestion != "" {
+						msg += "\n  try: " + suggestion
+					}
+					model.Restore(snapshot)
+					return mcp.NewToolResultText(fmt.Sprintf("! Batch failed at op %d: %s. Error: %s. State rolled back (%d ops reverted).", i+1, opStr, msg, i)), nil
 				}
-				model.Restore(snapshot)
-				return mcp.NewToolResultText(fmt.Sprintf("! Batch failed at op %d: %s. Error: %s. State rolled back (%d ops reverted).", i+1, opStr, msg, i)), nil
 			}
 
 			result, event := adapter.DispatchOp(parsed.Op, model)
