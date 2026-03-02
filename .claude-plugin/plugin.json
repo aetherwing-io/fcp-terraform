@@ -1,7 +1,7 @@
 {
   "name": "fcp-terraform",
   "description": "Generate Terraform HCL through resource declarations",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "license": "MIT",
   "author": {
     "name": "Scott Meyer"

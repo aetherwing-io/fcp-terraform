@@ -101,6 +101,7 @@ func (s *Session) dispatchNew(tokens []string) string {
 		return fmt.Sprintf("error: %s", err.Error())
 	}
 	s.Model = model
+	s.Log = NewEventLog()
 	s.FilePath = ""
 
 	title := params["title"]
@@ -120,6 +121,7 @@ func (s *Session) dispatchOpen(tokens []string) string {
 		return fmt.Sprintf("error: %s", err.Error())
 	}
 	s.Model = model
+	s.Log = NewEventLog()
 	s.FilePath = path
 	return fmt.Sprintf("opened %q", path)
 }

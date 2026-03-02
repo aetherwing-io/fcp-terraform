@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -26,6 +27,7 @@ func main() {
 		"fcp-terraform",
 		"0.1.0",
 		server.WithToolCapabilities(false),
+		server.WithResourceCapabilities(false, false),
 	)
 
 	// ── terraform tool (batch mutations) ──────────────────
@@ -57,26 +59,67 @@ func main() {
 			return mcp.NewToolResultText("ERROR: ops must be an array of strings"), nil
 		}
 
-		var results []string
+		// Expansion phase: split ops on \n, filter empty lines
+		var expandedOps []string
 		for _, opRaw := range opsSlice {
 			opStr, ok := opRaw.(string)
 			if !ok {
+				expandedOps = append(expandedOps, "")
+				continue
+			}
+			for _, line := range strings.Split(opStr, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed != "" {
+					expandedOps = append(expandedOps, trimmed)
+				}
+			}
+		}
+
+		// Batch snapshot for atomicity
+		snapshot := model.Snapshot()
+
+		var results []string
+		for i, opStr := range expandedOps {
+			if opStr == "" {
 				results = append(results, "ERROR: each op must be a string")
 				continue
 			}
 
 			parsed := fcpcore.ParseOp(opStr)
 			if parsed.Err != nil {
-				results = append(results, fmt.Sprintf("ERROR: %s", parsed.Err.Error))
-				continue
+				log.Printf("[fcp-terraform] WARN parse error: %s (op: %s)", parsed.Err.Error, opStr)
+				model.Restore(snapshot)
+				return mcp.NewToolResultText(fmt.Sprintf("! Batch failed at op %d: %s. Error: %s. State rolled back (%d ops reverted).", i+1, opStr, parsed.Err.Error, i)), nil
+			}
+
+			// Verb validation
+			if _, ok := registry.Lookup(parsed.Op.Verb); !ok {
+				msg := fmt.Sprintf("unknown verb %q", parsed.Op.Verb)
+				verbNames := make([]string, 0)
+				for _, v := range registry.Verbs() {
+					verbNames = append(verbNames, v.Name)
+				}
+				if suggestion := fcpcore.Suggest(parsed.Op.Verb, verbNames); suggestion != "" {
+					msg += "\n  try: " + suggestion
+				}
+				model.Restore(snapshot)
+				return mcp.NewToolResultText(fmt.Sprintf("! Batch failed at op %d: %s. Error: %s. State rolled back (%d ops reverted).", i+1, opStr, msg, i)), nil
 			}
 
 			result, event := adapter.DispatchOp(parsed.Op, model)
+			if strings.HasPrefix(result, "ERROR:") {
+				model.Restore(snapshot)
+				return mcp.NewToolResultText(fmt.Sprintf("! Batch failed at op %d: %s. Error: %s. State rolled back (%d ops reverted).", i+1, opStr, result, i)), nil
+			}
 			session.Log.Append(event)
 			results = append(results, result)
 		}
 
-		return mcp.NewToolResultText(strings.Join(results, "\n")), nil
+		body := strings.Join(results, "\n")
+		if digest := adapter.GetDigest(session.Model); digest != "" {
+			body = body + "\n" + digest
+		}
+		return mcp.NewToolResultText(body), nil
 	})
 
 	// ── terraform_query tool (read-only) ──────────────────
@@ -112,7 +155,13 @@ func main() {
 	)
 	s.AddTool(sessionTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		action := req.GetString("action", "")
+		log.Printf("[fcp-terraform] INFO session: %s", action)
 		result := session.Dispatch(action)
+		if session.Model != nil {
+			if digest := adapter.GetDigest(session.Model); digest != "" {
+				result = result + "\n" + digest
+			}
+		}
 		return mcp.NewToolResultText(result), nil
 	})
 
@@ -122,6 +171,50 @@ func main() {
 	)
 	s.AddTool(helpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText(refCard), nil
+	})
+
+	// ── Resources ────────────────────────────────────────
+	sessionResource := mcp.NewResource(
+		"fcp://terraform/session",
+		"session-status",
+		mcp.WithResourceDescription("Current terraform session state"),
+		mcp.WithMIMEType("text/plain"),
+	)
+	s.AddResource(sessionResource, func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		if session.Model == nil {
+			return []mcp.ResourceContents{
+				mcp.TextResourceContents{URI: "fcp://terraform/session", MIMEType: "text/plain", Text: "No terraform session active."},
+			}, nil
+		}
+		var lines []string
+		if session.FilePath != "" {
+			lines = append(lines, "File: "+session.FilePath)
+		}
+		if digest := adapter.GetDigest(session.Model); digest != "" {
+			lines = append(lines, "State: "+digest)
+		}
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{URI: "fcp://terraform/session", MIMEType: "text/plain", Text: strings.Join(lines, "\n")},
+		}, nil
+	})
+
+	modelResource := mcp.NewResource(
+		"fcp://terraform/model",
+		"model-overview",
+		mcp.WithResourceDescription("Current terraform model contents"),
+		mcp.WithMIMEType("text/plain"),
+	)
+	s.AddResource(modelResource, func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		if session.Model == nil {
+			return []mcp.ResourceContents{
+				mcp.TextResourceContents{URI: "fcp://terraform/model", MIMEType: "text/plain", Text: "No model loaded."},
+			}, nil
+		}
+		model, _ := session.Model.(*terraform.TerraformModel)
+		text := terraform.DispatchQuery("map", model, session.Log)
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{URI: "fcp://terraform/model", MIMEType: "text/plain", Text: text},
+		}, nil
 	})
 
 	// Start stdio server
