@@ -35,8 +35,15 @@ changelog:
   sort: asc
 
 release:
+  extra_files:
+    - glob: scripts/install.sh
   footer: |
     ## Installation
+
+    **Quick install (recommended):**
+    ```bash
+    curl -LsSf https://github.com/aetherwing-io/fcp-terraform/releases/latest/download/install.sh | sh
+    ```
 
     **Go install:**
     ```bash
