@@ -9,6 +9,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/aetherwing-io/fcp-terraform/internal/bridge"
 	"github.com/aetherwing-io/fcp-terraform/internal/fcpcore"
 	"github.com/aetherwing-io/fcp-terraform/internal/terraform"
 )
@@ -221,6 +222,15 @@ func main() {
 		return []mcp.ResourceContents{
 			mcp.TextResourceContents{URI: "fcp://terraform/model", MIMEType: "text/plain", Text: text},
 		}, nil
+	})
+
+	// Start slipstream bridge in background
+	go bridge.Connect(bridge.Config{
+		Domain:     "terraform",
+		Extensions: []string{"tf", "tfvars"},
+		Session:    session,
+		Adapter:    adapter,
+		Registry:   registry,
 	})
 
 	// Start stdio server
