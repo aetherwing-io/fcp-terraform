@@ -29,6 +29,7 @@ func main() {
 		"0.1.0",
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
+		server.WithInstructions("FCP Terraform server for generating HashiCorp Terraform HCL configurations. Use terraform_session to start a new configuration or open an existing .tf file, terraform to add resources/variables/outputs/providers and modify infrastructure blocks, terraform_query to inspect the current configuration, and terraform_help for the full verb reference. Start every interaction with terraform_session."),
 	)
 
 	// ── terraform tool (batch mutations) ──────────────────
